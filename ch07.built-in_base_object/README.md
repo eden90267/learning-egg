@@ -13,4 +13,27 @@ Application 對象幾乎可以在編寫應用時的任何一個地方獲取到�
 幾乎所有被框架 Loader 加載的文件 (Controller, Service, Schedule 等)，都可以 export 一個函數，這個函數會被 Loader 調用，並使用 app 作為參數。
 
 - 啟動自定義腳本
+
+  ```javascript
+  // app.js
+  module.exports = app => {
+    app.cache = new Cache();
+  };
+  ```
+
 - Controller 文件
+
+  ```javascript
+  // app/controller/user.js
+  class UserController extends Controller {
+    async fetch() {
+      this.ctx.body = app.cache.get(this.ctx.query.id);
+    }
+  }
+  ```
+
+和 Koa 一樣，在 Context 對象上，可以透過 ctx.app 訪問到 Application 對象。以上面的 Controller 文件舉例：
+
+```javascript
+
+```
