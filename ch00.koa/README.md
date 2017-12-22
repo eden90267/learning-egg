@@ -121,13 +121,13 @@ Context 對象還提供了其 request 和 response 方法的快捷方式。在�
 
 - [使用指南](guide.md)
 - [錯誤處理](error-handling.md)
-- Koa 與 Express
-- 常見問題
+- [Koa 與 Express](koa-vs-express.md)
+- [常見問題](faq.md)
 - [Koa v1.x -> v2.x](https://github.com/demopark/koa-docs-Zh-CN/blob/master/migration.md)
-- API 文檔
-  - Context
+- [API 文檔](api/index.md)
+  - [Context](api/context.md)
   - [Request](api/request.md)
-  - Response
+  - [Response](api/response.md)
 - [Koa 中間件列表](https://github.com/koajs/koa/wiki)
 
 ## Babel 配置
