@@ -563,3 +563,345 @@ module.exports = {
   maxAge: 86400000, // Session 的最大有效時間
 }
 ```
+
+## 參數校驗
+
+獲取到用戶請求參數，不免要對參數進行一些校驗。
+
+借助 Validate 插件提供便捷的參數校驗機制，可幫助我們完成各種複雜的參數校驗。
+
+```javascript
+// config/plugin.js
+exports.validate = {
+  enable: true,
+  package: 'egg-validate',
+};
+```
+
+透過 `ctx.validate(rule, [body])` 直接對參數進行校驗：
+
+```javascript
+class PostController extends Controller {
+  async create() {
+    // 校驗參數
+    // 如果不傳第二個參數會自動校驗 `ctx.request.body`
+    this.ctx.validate({
+      title: { type: 'string' },
+      content: { type: 'string' },
+    });
+  }
+}
+```
+
+當校驗異常，會直接拋出一個異常，statue code 是 422，errors 字段包含詳細的驗證不通過信息。如果想自己處理檢查的異常，可透過 `try catch` 自行捕獲。
+
+```javascript
+class PostController extends Controller {
+  async create() {
+    const ctx = this.ctx;
+    try {
+      ctx.validate(createRule);
+    } catch (err) {
+      ctx.logger.warn(err.errors);
+      ctx.body = { success: false };
+      return;
+    }
+  }
+};
+
+```
+
+### 校驗規則
+
+參數校驗透過 [Parameter](https://github.com/node-modules/parameter#rule) 完成，支持的校驗規則可在該模組的文檔中查閱。
+
+#### 自定義校驗規則
+
+可透過 `app.validator.addRule(type, check)` 的方式新增校驗規則：
+
+```javascript
+// app.js
+app.validator.addRule('json', (rule, value) => {
+  try {
+    JSON.parse(value);
+  } catch (err) {
+    return 'must be json string'
+  }
+});
+```
+
+添加玩自定義規則後，就可在 Controller 直接使用：
+
+```javascript
+class PostController extends Controller {
+  async handler() {
+    const ctx = this.ctx;
+    // query.test 字段必須是 json 字符串
+    const rule = { test: 'json' };
+    ctx.validate(rule, ctx.query);
+  }
+};
+```
+
+## 調用 Service
+
+讓 Service 進行業務邏輯的封裝，能提高代碼復用性，同時可讓我們業務邏輯更好測試。
+
+Controller 可調用任何一個 Service 上的任何方法，同時 Service 是懶加載，只有當訪問到的時候框架才會實例化它。
+
+```javascript
+class PostController extends Controller {
+  async create() {
+    const ctx = this.ctx;
+    const author = ctx.session.userId;
+    const req = Object.assign(ctx.request.body, { author });
+    // 調用 service 進行業務邏輯
+    const res = await ctx.service.post.create(req);
+    ctx.body = { id: res.id };
+    ctx.status = 201;
+  }
+}
+```
+
+具體可看 [Service](https://eggjs.org/zh-cn/basics/service.html) 章節。
+
+## 發送 HTTP 響應
+
+當業務邏輯完成後，Controller 最後職責就是將業務邏輯結果透過 HTTP 響應發送給用戶。
+
+### 設置 status
+
+設置正確狀態碼，可讓響應更符合語意。
+
+框架提供一個便捷的 Setter 來進行狀態碼的設置
+
+```javascript
+class PostController extends Controller {
+  async create() {
+    this.ctx.status = 201;
+  }
+};
+```
+
+可參考 [List of HTTP status codes](https://www.wikiwand.com/en/List_of_HTTP_status_codes) 各狀態碼含義。
+
+### 設置 body
+
+絕大多數資料都是透過 body 發送給請求方，在響應中發送的 body，也需要有配套的 Content-Type 告知客戶端如何對數據進行解析。
+
+- RESTful API 的 controller：Content-Type 為 `application/json` 格式的 body，內容是 JSON。
+- html 頁面的 controller，Content-Type 為 `text/html`，內容是 html 代碼段。
+
+```javascript
+class ViewController extends Controller {
+  async show() {
+    this.ctx.body = {
+      name: 'egg',
+      category: 'framework',
+      language: 'Node.js',
+    };
+  }
+
+  async page() {
+    this.ctx.body = '<html><h1>Hello</h1></html>';
+  }
+}
+```
+
+由於 Node.js 流式特性，很多場景需透過 Stream 返回響應，例如返回一個大文件，代理伺服器直接返回上游的內容，框架也支持直接將 body 設置設置成一個 Stream，並會同時處理好這個 Stream 上的錯誤事件。
+
+```javascript
+class ProxyController extends Controller {
+  async proxy() {
+    const ctx = this.ctx;
+    const result = await ctx.curl(url, {
+      streaming: true,
+    });
+    ctx.set(result.header);
+    // result.res 是一個 stream
+    ctx.body = result.res;
+  }
+};
+```
+
+#### 渲染模板
+
+一般我們不會手寫 HTML 頁面，而是會透過模板引擎進行生成，框架自身沒集成任何一個模板引擎，但約定了 View 插件的規範，透過接入的模板引擎，可直接使用 `ctx.render(template)` 來渲染模板生成 ht,;
+
+```javascript
+class HomeController extends Controller {
+  async index() {
+    const ctx = this.ctx;
+    await ctx.render('home.tpl', { name: 'egg' });
+    // ctx.body = await ctx.renderString('hi, {{ name }}', { name: 'egg' });
+  }
+};
+```
+
+具體事例可查看 [模板渲染](https://eggjs.org/zh-cn/core/view.html)。
+
+### JSONP
+
+有時我們需要給非本域的頁面提供接口服務，又由於一些歷史原因無法透過 CORS 實現，可透過 JSONP 進行響應。
+
+由於 JSONP 使用不當會導致非常多的安全問題，所以框架中提供了便捷的響應 JSONP 格式數據的方法，封裝了 JSONP XSS 相關的安全防範，並支持進行 CSRF 校驗和 referrer 校驗。
+
+- 透過 `app.jsonp()` 提供的中間件讓一個 controller 支持響應 JSONP 格式的數據。在路由中，我們給需要支持 jsonp 的路由加上這個中間件：
+
+```javascript
+// app/router.js
+module.exports = app => {
+  const jsonp = app.jsonp();
+  app.router.get('/api/posts/:id', jsonp, app.controller.posts.show);
+  app.router.get('/api/posts', jsonp, app.controller.posts.list);
+};
+```
+
+Controller 只需要正常編寫即可：
+
+```javascript
+// app/controller/posts.js
+class PostController extends Controller {
+  async show() {
+    this.ctx.body = {
+      name: 'egg',
+      category: 'framework',
+      language: 'Node.js',
+    };
+  }
+}
+```
+
+用戶請求對應的 URL 訪問到這個 controller 的時候，如果 query 中有 _callback=fn 參數，將會返回 JSONP 格式的數據，否則返回 JSOP 格式的數據。
+
+#### JSONP 配置
+
+框架默認：query 中的 _callback 參數識別是否返回 JSONP 格式數據的依據，並且 _callback 中設置的方法長度最多只允許 50。應用可在 `config/config.default.js` 全局覆蓋默認設置：
+
+```javascript
+// config/config.default.js
+exports.jsonp = {
+  callback: 'callback', // 識別 query 中的 `callback` 参數
+  limit: 100, // 函數名最長为 100 個字符
+};
+```
+
+同樣可以在 app.jsonp() 創建中間件時覆蓋默認設定，以達不同路由使用不同配置：
+
+```javascript
+// app/router.js
+module.exports = app => {
+  const { router, controller, jsonp } = app;
+  router.get('/api/posts/:id', jsonp({ callback: 'callback' }), controller.posts.show);
+  router.get('/api/posts', jsonp({ callback: 'cb' }), controller.posts.list);
+};
+```
+
+#### 跨站防禦配置
+
+默認，響應 JSONP 不會進行任何跨站攻擊的防範，但某些情況這是危險的。我們初略將 JSONP 接口分三類：
+
+1. 查詢非敏感數據
+2. 查詢敏感數據
+3. 提交數據並修改數據庫
+
+如果我們 JSONP 提供 2, 3 服務，再不做任何跨站防禦情況下，可能泄露用戶敏感數據甚至導致用戶被釣魚。因此框架給 JSONP 默認提供 CSRF 校驗支持和 referrer 校驗支持。
+
+CSRF
+
+```javascript
+// config/config.default.js
+module.exports = {
+  jsonp: {
+    csrf: true,
+  },
+};
+```
+
+即可開啟。
+
+注意：CSRF 依賴於 [security](https://eggjs.org/zh-cn/core/security.html) 插件提供的支持 Cookie 的 CSRF 校驗。
+
+開啟 CSRF 校驗，客戶端在發起 JSONP 請求，也要戴上 CSRF token，如果發起 JSONP 的請求方所在頁面和我們服務在同一主域名下，可讀取 Cookie 中的 CSRF token (在 CSRF token 缺失也可自行設置到 Cookie 中)，並在請求帶上該 cookie。
+
+referrer 校驗
+
+同一主遇，可開啟 CSRF 校驗 JSONP 請求的來源，如果想對其他域名網頁提供 JSONP 服務，可透過配置 referrer 白名單方式限制 JSONP 的請求方在可控範圍內。
+
+```javascript
+//config/config.default.js
+exports.jsonp = {
+  whiteList: /^https?:\/\/test.com\//,
+  // whiteList: '.test.com',
+  // whiteList: 'sub.test.com',
+  // whiteList: [ 'sub.test.com', 'sub2.test.com' ],
+};
+```
+
+whiteList 可配置 正則表達式、字符串或數組。
+
+- 正則表達式
+
+```javascript
+exports.jsonp = {
+  whiteList: /^https?:\/\/test.com\//,
+};
+// matches referrer:
+// https://test.com/hello
+// http://test.com/
+```
+
+- 字符串：分兩種，點( `.` )開頭代表所有子域名，不以點開頭則該域名。(同時支持 HTTP 和 HTTPS)
+
+```javascript
+exports.jsonp = {
+  whiteList: '.test.com',
+};
+// matches domain test.com:
+// https://test.com/hello
+// http://test.com/
+
+// matches subdomain
+// https://sub.test.com/hello
+// http://sub.sub.test.com/
+
+exports.jsonp = {
+  whiteList: 'sub.test.com',
+};
+// only matches domain sub.test.com:
+// https://sub.test.com/hello
+// http://sub.test.com/
+```
+
+- 數組：滿足任一條件即可通過 referrer 校驗
+
+```javascript
+exports.jsonp = {
+  whiteList: [ 'sub.test.com', 'sub2.test.com' ],
+};
+// matches domain sub.test.com and sub2.test.com:
+// https://sub.test.com/hello
+// http://sub2.test.com/
+```
+
+當 CSRF 和 referrer 校驗同時開啟，請求發起方只要任一條件滿足即通過 JSONP 安全校驗。
+
+### 設置 Header
+
+我們透過狀態碼標示請求成功與否、狀態如何，在 body 設置響應內容。而透過 Header，可設置一些擴展信息。
+
+`ctx.set(key, value)` or `ctx.set(headers)`
+
+```javascript
+// app/controller/api.js
+class ProxyController extends Controller {
+  async show() {
+    const ctx = this.ctx;
+    const start = Date.now();
+    ctx.body = await ctx.service.post.get();
+    const used = Date.now() - start;
+    // 設置一個響應頭
+    ctx.set('show-response-time', used.toString());
+  }
+};
+```
